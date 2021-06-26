@@ -28,7 +28,7 @@ Se duas threads separadas estão gravando em dois valores diferentes, cada núcl
      
 ### 2.3. Como funciona o disruptor
 
-<img src="cpu2.png>
+<img src="cpu2.png">
           
 O disruptor tem uma estrutura de dados circular baseada em array (buffer em anel). É uma matriz que possui um ponteiro para o próximo slot disponível. Ele é preenchido com objetos de transferência pré-alocados. Os produtores e consumidores executam a gravação e a leitura dos dados no anel sem travamento ou contenção.
 
@@ -59,7 +59,87 @@ Vamos definir o evento que carrega os dados:
 }         
  ```
  A EventFactory permite que o Disruptor pré-aloque os eventos.
-          
+ 
+### 3.3. Consumidor
+Os consumidores leem dados do buffer de anel. Vamos definir um consumidor que tratará dos eventos:
+
+```
+public class SingleEventPrintConsumer {
+    ...
+
+    public EventHandler<ValueEvent>[] getEventHandler() {
+        EventHandler<ValueEvent> eventHandler 
+          = (event, sequence, endOfBatch) 
+            -> print(event.getValue(), sequence);
+        return new EventHandler[] { eventHandler };
+    }
+ 
+    private void print(int id, long sequenceId) {
+        logger.info("Id is " + id 
+          + " sequence id that was used is " + sequenceId);
+    }
+}
+```
+
+Em nosso exemplo, o consumidor está apenas imprimindo em um log.
+
+### 3.4. Construindo o disruptor
+Construa o disruptor:
+
+```
+ThreadFactory threadFactory = DaemonThreadFactory.INSTANCE;
+
+WaitStrategy waitStrategy = new BusySpinWaitStrategy();
+Disruptor<ValueEvent> disruptor 
+  = new Disruptor<>(
+    ValueEvent.EVENT_FACTORY, 
+    16, 
+    threadFactory, 
+    ProducerType.SINGLE, 
+    waitStrategy);
+```
+
+No construtor do Disruptor, são definidos os seguintes:
+
+- Event Factory - Responsável por gerar objetos que serão armazenados no ring buffer durante a inicialização;
+- O tamanho do buffer de anel - Definimos 16 como o tamanho do buffer de anel. Tem que ser uma potência de 2, caso contrário, lançaria uma exceção durante a inicialização. Isso é importante porque é fácil realizar a maioria das operações usando operadores binários lógicos, por exemplo, operação mod
+- Thread Factory - Factory para criar threads para processadores de eventos;
+- Tipo de produtor - especifica se teremos um ou vários produtores;
+- Estratégia de espera - define como gostaríamos de lidar com assinantes lentos que não acompanham o ritmo do produtor.
+
+Conecte o gerenciador do consumidor:
+
+```
+disruptor.handleEventsWith(getEventHandler());
+```
+
+É possível fornecer Disruptor a vários consumidores para lidar com os dados produzidos pelo produtor. No exemplo acima, temos apenas um manipulador de eventos de consumidor a.k.a.
+
+### 3.5. Iniciando o disruptor
+Para iniciar o disruptor:
+
+```
+RingBuffer<ValueEvent> ringBuffer = disruptor.start();
+```
+
+3.6. Produção e publicação de eventos
+Os produtores colocam os dados no buffer de anel em uma sequência. Os produtores precisam estar cientes do próximo slot disponível para não sobrescrever os dados que ainda não foram consumidos.
+
+Use o RingBuffer do Disruptor para publicar:
+
+```
+for (int eventCount = 0; eventCount < 32; eventCount++) {
+    long sequenceId = ringBuffer.next();
+    ValueEvent valueEvent = ringBuffer.get(sequenceId);
+    valueEvent.setValue(eventCount);
+    ringBuffer.publish(sequenceId);
+}
+```
+
+Aqui, o produtor está produzindo e publicando itens em sequência. É importante observar aqui que o Disruptor funciona de maneira semelhante ao protocolo 2 phase commit. Ele lê um novo sequenceId e o publica. Na próxima vez, ele deve obter sequenceId + 1 como o próximo sequenceId.
+
+# 4. Conclusão
+Neste tutorial, vimos o que é um Disruptor e como ele atinge a simultaneidade com baixa latência. Vimos o conceito de simpatia mecânica e como ela pode ser explorada para atingir baixa latência. Vimos então um exemplo usando a biblioteca Disruptor.    
   
           
  
